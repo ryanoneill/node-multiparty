@@ -17,7 +17,7 @@ var HEADER_VALUE_ALMOST_DONE = 6;
 var HEADERS_ALMOST_DONE = 7;
 var PART_DATA_START = 8;
 var PART_DATA = 9;
-var PART_END = 10;
+// var PART_END = 10;
 var CLOSE_BOUNDARY = 11;
 var END = 12;
 
@@ -71,7 +71,7 @@ function Form(options) {
 
   self.emitQueue = [];
 
-  self.on('newListener', function(eventName) {
+  self.on('newListener', function (eventName) {
     if (eventName === 'file') {
       self.autoFiles = true;
     } else if (eventName === 'field') {
@@ -80,7 +80,7 @@ function Form(options) {
   });
 }
 
-Form.prototype.parse = function(req, cb) {
+Form.prototype.parse = function (req, cb) {
   var called = false;
   var self = this;
   var waitend = true;
@@ -97,7 +97,7 @@ Form.prototype.parse = function(req, cb) {
       called = true;
 
       // wait for req events to fire
-      process.nextTick(function() {
+      process.nextTick(function () {
         if (waitend && req.readable) {
           // dump rest of request
           req.resume();
@@ -111,21 +111,21 @@ Form.prototype.parse = function(req, cb) {
 
     var fields = {};
     var files = {};
-    self.on('error', function(err) {
-      end(function() {
+    self.on('error', function (err) {
+      end(function () {
         cb(err);
       });
     });
-    self.on('field', function(name, value) {
+    self.on('field', function (name, value) {
       var fieldsArray = fields[name] || (fields[name] = []);
       fieldsArray.push(value);
     });
-    self.on('file', function(name, file) {
+    self.on('file', function (name, file) {
       var filesArray = files[name] || (files[name] = []);
       filesArray.push(file);
     });
-    self.on('close', function() {
-      end(function() {
+    self.on('close', function () {
+      end(function () {
         cb(null, fields, files);
       });
     });
@@ -135,7 +135,7 @@ Form.prototype.parse = function(req, cb) {
   self.bytesExpected = getBytesExpected(req.headers);
 
   req.on('end', onReqEnd);
-  req.on('error', function(err) {
+  req.on('error', function (err) {
     waitend = false;
     handleError(err);
   });
@@ -180,7 +180,7 @@ Form.prototype.parse = function(req, cb) {
   function onReqAborted() {
     waitend = false;
     self.emit('aborted');
-    handleError(new Error("Request aborted"));
+    handleError(new Error('Request aborted'));
   }
 
   function onReqEnd() {
@@ -207,11 +207,11 @@ Form.prototype.parse = function(req, cb) {
 
   function validationError(err) {
     // handle error on next tick for event listeners to attach
-    process.nextTick(handleError.bind(null, err))
+    process.nextTick(handleError.bind(null, err));
   }
 };
 
-Form.prototype._write = function(buffer, encoding, cb) {
+Form.prototype._write = function (buffer, encoding, cb) {
   if (this.error) return;
 
   var self = this;
@@ -229,175 +229,260 @@ Form.prototype._write = function(buffer, encoding, cb) {
   var c;
   var cl;
 
+  function handleStart() {
+    index = 0;
+    state = START_BOUNDARY;
+    return undefined;
+  }
+
+  function handleStartBoundary() {
+    if (index === boundaryLength - 2 && c === HYPHEN) {
+      index = 1;
+      state = CLOSE_BOUNDARY;
+      return undefined;
+    } else if (index === boundaryLength - 2) {
+      if (c !== CR) {
+        return self.handleError(createError(400, 'Expected CR Received ' + c));
+      }
+      index++;
+      return undefined;
+    } else if (index === boundaryLength - 1) {
+      if (c !== LF) {
+        return self.handleError(createError(400, 'Expected LF Received ' + c));
+      }
+      index = 0;
+      self.onParsePartBegin();
+      state = HEADER_FIELD_START;
+      return undefined;
+    }
+
+    if (c !== boundary[index + 2]) index = -2;
+    if (c === boundary[index + 2]) index++;
+    return undefined;
+  }
+
+  function handleHeaderFieldStart() {
+    state = HEADER_FIELD;
+    self.headerFieldMark = i;
+    index = 0;
+    return undefined;
+  }
+
+  function handleHeaderField() {
+    if (c === CR) {
+      self.headerFieldMark = null;
+      state = HEADERS_ALMOST_DONE;
+      return undefined;
+    }
+
+    index++;
+    if (c === HYPHEN) {
+      return undefined;
+    }
+
+    if (c === COLON) {
+      if (index === 1) {
+        // empty header field
+        self.handleError(createError(400, 'Empty header field'));
+        return;
+      }
+      self.onParseHeaderField(buffer.slice(self.headerFieldMark, i));
+      self.headerFieldMark = null;
+      state = HEADER_VALUE_START;
+      return undefined;
+    }
+
+    cl = lower(c);
+    if (cl < A || cl > Z) {
+      self.handleError(createError(400,
+        'Expected alphabetic character, received ' + c));
+      return;
+    }
+    return undefined;
+  }
+
+  function handleHeaderValueStart() {
+    if (c === SPACE) {
+      return undefined;
+    }
+
+    self.headerValueMark = i;
+    state = HEADER_VALUE;
+    return undefined;
+  }
+
+  function handleHeaderValue() {
+    if (c === CR) {
+      self.onParseHeaderValue(buffer.slice(self.headerValueMark, i));
+      self.headerValueMark = null;
+      self.onParseHeaderEnd();
+      state = HEADER_VALUE_ALMOST_DONE;
+    }
+    return undefined;
+  }
+
+  function handleHeaderValueAlmostDone() {
+    if (c !== LF) {
+      return self.handleError(createError(400,
+        'Expected LF Received ' + c));
+    }
+    state = HEADER_FIELD_START;
+    return undefined;
+  }
+
+  function handleHeadersAlmostDone() {
+    if (c !== LF) {
+      return self.handleError(createError(400,
+        'Expected LF Received ' + c));
+    }
+    var err = self.onParseHeadersEnd(i + 1);
+    if (err) return self.handleError(err);
+    state = PART_DATA_START;
+    return undefined;
+  }
+
+  function handlePartDataStart() {
+    state = PART_DATA;
+    self.partDataMark = i;
+    return undefined;
+  }
+
+  function handlePartData() {
+    prevIndex = index;
+
+    if (index === 0) {
+      // boyer-moore derrived algorithm to safely skip non-boundary data
+      i += boundaryEnd;
+      while (i < bufferLength && !(buffer[i] in boundaryChars)) {
+        i += boundaryLength;
+      }
+      i -= boundaryEnd;
+      c = buffer[i];
+    }
+
+    if (index < boundaryLength) {
+      if (boundary[index] === c) {
+        if (index === 0) {
+          self.onParsePartData(buffer.slice(self.partDataMark, i));
+          self.partDataMark = null;
+        }
+        index++;
+      } else {
+        index = 0;
+      }
+    } else if (index === boundaryLength) {
+      index++;
+      if (c === CR) {
+        // CR = part boundary
+        self.partBoundaryFlag = true;
+      } else if (c === HYPHEN) {
+        index = 1;
+        state = CLOSE_BOUNDARY;
+        return undefined;
+      } else {
+        index = 0;
+      }
+    } else if (index - 1 === boundaryLength) {
+      if (self.partBoundaryFlag) {
+        index = 0;
+        if (c === LF) {
+          self.partBoundaryFlag = false;
+          self.onParsePartEnd();
+          self.onParsePartBegin();
+          state = HEADER_FIELD_START;
+          return undefined;
+        }
+      } else {
+        index = 0;
+      }
+    }
+
+    if (index > 0) {
+      // when matching a possible boundary, keep a lookbehind reference
+      // in case it turns out to be a false lead
+      lookbehind[index - 1] = c;
+    } else if (prevIndex > 0) {
+      // if our boundary turned out to be rubbish, the captured lookbehind
+      // belongs to partData
+      self.onParsePartData(lookbehind.slice(0, prevIndex));
+      prevIndex = 0;
+      self.partDataMark = i;
+
+      // reconsider the current character
+      // even so it interrupted the sequence
+      // it could be the beginning of a new sequence
+      i--;
+    }
+    return undefined;
+  }
+
+  function handleCloseBoundary() {
+    if (c !== HYPHEN) {
+      return self.handleError(createError(400,
+        'Expected HYPHEN Received ' + c));
+    }
+    if (index === 1) {
+      self.onParsePartEnd();
+      state = END;
+    } else if (index > 1) {
+      return self.handleError(new Error('Parser has invalid state.'));
+    }
+    index++;
+    return undefined;
+  }
+
+  var result;
   for (i = 0; i < len; i++) {
     c = buffer[i];
     switch (state) {
       case START:
-        index = 0;
-        state = START_BOUNDARY;
+        result = handleStart();
+        if (result) return result;
         /* falls through */
       case START_BOUNDARY:
-        if (index === boundaryLength - 2 && c === HYPHEN) {
-          index = 1;
-          state = CLOSE_BOUNDARY;
-          break;
-        } else if (index === boundaryLength - 2) {
-          if (c !== CR) return self.handleError(createError(400, 'Expected CR Received ' + c));
-          index++;
-          break;
-        } else if (index === boundaryLength - 1) {
-          if (c !== LF) return self.handleError(createError(400, 'Expected LF Received ' + c));
-          index = 0;
-          self.onParsePartBegin();
-          state = HEADER_FIELD_START;
-          break;
-        }
-
-        if (c !== boundary[index+2]) index = -2;
-        if (c === boundary[index+2]) index++;
+        result = handleStartBoundary();
+        if (result) return result;
         break;
       case HEADER_FIELD_START:
-        state = HEADER_FIELD;
-        self.headerFieldMark = i;
-        index = 0;
+        result = handleHeaderFieldStart();
+        if (result) return result;
         /* falls through */
       case HEADER_FIELD:
-        if (c === CR) {
-          self.headerFieldMark = null;
-          state = HEADERS_ALMOST_DONE;
-          break;
-        }
-
-        index++;
-        if (c === HYPHEN) break;
-
-        if (c === COLON) {
-          if (index === 1) {
-            // empty header field
-            self.handleError(createError(400, 'Empty header field'));
-            return;
-          }
-          self.onParseHeaderField(buffer.slice(self.headerFieldMark, i));
-          self.headerFieldMark = null;
-          state = HEADER_VALUE_START;
-          break;
-        }
-
-        cl = lower(c);
-        if (cl < A || cl > Z) {
-          self.handleError(createError(400, 'Expected alphabetic character, received ' + c));
-          return;
-        }
+        result = handleHeaderField();
+        if (result) return result;
         break;
       case HEADER_VALUE_START:
-        if (c === SPACE) break;
-
-        self.headerValueMark = i;
-        state = HEADER_VALUE;
+        result = handleHeaderValueStart();
+        if (result) return result;
         /* falls through */
       case HEADER_VALUE:
-        if (c === CR) {
-          self.onParseHeaderValue(buffer.slice(self.headerValueMark, i));
-          self.headerValueMark = null;
-          self.onParseHeaderEnd();
-          state = HEADER_VALUE_ALMOST_DONE;
-        }
+        result = handleHeaderValue();
+        if (result) return result;
         break;
       case HEADER_VALUE_ALMOST_DONE:
-        if (c !== LF) return self.handleError(createError(400, 'Expected LF Received ' + c));
-        state = HEADER_FIELD_START;
+        result = handleHeaderValueAlmostDone();
+        if (result) return result;
         break;
       case HEADERS_ALMOST_DONE:
-        if (c !== LF) return self.handleError(createError(400, 'Expected LF Received ' + c));
-        var err = self.onParseHeadersEnd(i + 1);
-        if (err) return self.handleError(err);
-        state = PART_DATA_START;
+        result = handleHeadersAlmostDone();
+        if (result) return result;
         break;
       case PART_DATA_START:
-        state = PART_DATA;
-        self.partDataMark = i;
+        result = handlePartDataStart();
+        if (result) return result;
         /* falls through */
       case PART_DATA:
-        prevIndex = index;
-
-        if (index === 0) {
-          // boyer-moore derrived algorithm to safely skip non-boundary data
-          i += boundaryEnd;
-          while (i < bufferLength && !(buffer[i] in boundaryChars)) {
-            i += boundaryLength;
-          }
-          i -= boundaryEnd;
-          c = buffer[i];
-        }
-
-        if (index < boundaryLength) {
-          if (boundary[index] === c) {
-            if (index === 0) {
-              self.onParsePartData(buffer.slice(self.partDataMark, i));
-              self.partDataMark = null;
-            }
-            index++;
-          } else {
-            index = 0;
-          }
-        } else if (index === boundaryLength) {
-          index++;
-          if (c === CR) {
-            // CR = part boundary
-            self.partBoundaryFlag = true;
-          } else if (c === HYPHEN) {
-            index = 1;
-            state = CLOSE_BOUNDARY;
-            break;
-          } else {
-            index = 0;
-          }
-        } else if (index - 1 === boundaryLength)  {
-          if (self.partBoundaryFlag) {
-            index = 0;
-            if (c === LF) {
-              self.partBoundaryFlag = false;
-              self.onParsePartEnd();
-              self.onParsePartBegin();
-              state = HEADER_FIELD_START;
-              break;
-            }
-          } else {
-            index = 0;
-          }
-        }
-
-        if (index > 0) {
-          // when matching a possible boundary, keep a lookbehind reference
-          // in case it turns out to be a false lead
-          lookbehind[index-1] = c;
-        } else if (prevIndex > 0) {
-          // if our boundary turned out to be rubbish, the captured lookbehind
-          // belongs to partData
-          self.onParsePartData(lookbehind.slice(0, prevIndex));
-          prevIndex = 0;
-          self.partDataMark = i;
-
-          // reconsider the current character even so it interrupted the sequence
-          // it could be the beginning of a new sequence
-          i--;
-        }
-
+        result = handlePartData();
+        if (result) return result;
         break;
       case CLOSE_BOUNDARY:
-        if (c !== HYPHEN) return self.handleError(createError(400, 'Expected HYPHEN Received ' + c));
-        if (index === 1) {
-          self.onParsePartEnd();
-          state = END;
-        } else if (index > 1) {
-          return self.handleError(new Error("Parser has invalid state."));
-        }
-        index++;
+        result = handleCloseBoundary();
+        if (result) return result;
         break;
       case END:
         break;
       default:
-        self.handleError(new Error("Parser has invalid state."));
+        self.handleError(new Error('Parser has invalid state.'));
         return;
     }
   }
@@ -428,25 +513,26 @@ Form.prototype._write = function(buffer, encoding, cb) {
   }
 };
 
-Form.prototype.onParsePartBegin = function() {
+Form.prototype.onParsePartBegin = function () {
   clearPartVars(this);
-}
+};
 
-Form.prototype.onParseHeaderField = function(b) {
+Form.prototype.onParseHeaderField = function (b) {
   this.headerField += this.headerFieldDecoder.write(b);
-}
+};
 
-Form.prototype.onParseHeaderValue = function(b) {
+Form.prototype.onParseHeaderValue = function (b) {
   this.headerValue += this.headerValueDecoder.write(b);
-}
+};
 
-Form.prototype.onParseHeaderEnd = function() {
+Form.prototype.onParseHeaderEnd = function () {
   this.headerField = this.headerField.toLowerCase();
   this.partHeaders[this.headerField] = this.headerValue;
 
   var m;
   if (this.headerField === 'content-disposition') {
-    if (m = this.headerValue.match(/\bname="([^"]+)"/i)) {
+    m = this.headerValue.match(/\bname="([^"]+)"/i);
+    if (m) {
       this.partName = m[1];
     }
     this.partFilename = parseFilename(this.headerValue);
@@ -458,30 +544,30 @@ Form.prototype.onParseHeaderEnd = function() {
   this.headerField = '';
   this.headerValueDecoder = new StringDecoder(this.encoding);
   this.headerValue = '';
-}
+};
 
-Form.prototype.onParsePartData = function(b) {
+Form.prototype.onParsePartData = function (b) {
   if (this.partTransferEncoding === 'base64') {
-    this.backpressure = ! this.destStream.write(b.toString('ascii'), 'base64');
+    this.backpressure = !this.destStream.write(b.toString('ascii'), 'base64');
   } else {
-    this.backpressure = ! this.destStream.write(b);
+    this.backpressure = !this.destStream.write(b);
   }
-}
+};
 
-Form.prototype.onParsePartEnd = function() {
+Form.prototype.onParsePartEnd = function () {
   if (this.destStream) {
     flushWriteCbs(this);
     var s = this.destStream;
-    process.nextTick(function() {
+    process.nextTick(function () {
       s.end();
     });
   }
   clearPartVars(this);
-}
+};
 
-Form.prototype.onParseHeadersEnd = function(offset) {
+Form.prototype.onParseHeadersEnd = function (offset) {
   var self = this;
-  switch(self.partTransferEncoding){
+  switch (self.partTransferEncoding) {
     case 'binary':
     case '7bit':
     case '8bit':
@@ -490,7 +576,8 @@ Form.prototype.onParseHeadersEnd = function(offset) {
 
     case 'base64': break;
     default:
-    return createError(400, 'unknown transfer-encoding: ' + self.partTransferEncoding);
+    return createError(400, 'unknown transfer-encoding: ' +
+      self.partTransferEncoding);
   }
 
   self.totalFieldCount += 1;
@@ -499,7 +586,7 @@ Form.prototype.onParseHeadersEnd = function(offset) {
   }
 
   self.destStream = new stream.PassThrough();
-  self.destStream.on('drain', function() {
+  self.destStream.on('drain', function () {
     flushWriteCbs(self);
   });
   self.destStream.headers = self.partHeaders;
@@ -507,7 +594,8 @@ Form.prototype.onParseHeadersEnd = function(offset) {
   self.destStream.filename = self.partFilename;
   self.destStream.byteOffset = self.bytesReceived + offset;
   var partContentLength = self.destStream.headers['content-length'];
-  self.destStream.byteCount = partContentLength ? parseInt(partContentLength, 10) :
+  self.destStream.byteCount = partContentLength ?
+    parseInt(partContentLength, 10) :
     self.bytesExpected ? (self.bytesExpected - self.destStream.byteOffset -
       self.boundary.length - LAST_BOUNDARY_SUFFIX_LEN) :
     undefined;
@@ -519,10 +607,10 @@ Form.prototype.onParseHeadersEnd = function(offset) {
   } else {
     handlePart(self, self.destStream);
   }
-}
+};
 
 function flushWriteCbs(self) {
-  self.writeCbs.forEach(function(cb) {
+  self.writeCbs.forEach(function (cb) {
     process.nextTick(cb);
   });
   self.writeCbs = [];
@@ -550,7 +638,7 @@ function endFlush(self) {
   if (self.flushing < 0) {
     // if this happens this is a critical bug in multiparty and this stack trace
     // will help us figure it out.
-    self.handleError(new Error("unexpected endFlush"));
+    self.handleError(new Error('unexpected endFlush'));
     return;
   }
 
@@ -562,25 +650,25 @@ function maybeClose(self) {
 
   // go through the emit queue in case any field, file, or part events are
   // waiting to be emitted
-  holdEmitQueue(self)(function() {
+  holdEmitQueue(self)(function () {
     // nextTick because the user is listening to part 'end' events and we are
     // using part 'end' events to decide when to emit 'close'. we add our 'end'
     // handler before the user gets a chance to add theirs. So we make sure
     // their 'end' event fires before we emit the 'close' event.
     // this is covered by test/standalone/test-issue-36
-    process.nextTick(function() {
+    process.nextTick(function () {
       self.emit('close');
     });
   });
 }
 
 function cleanupOpenFiles(self) {
-  self.openedFiles.forEach(function(internalFile) {
+  self.openedFiles.forEach(function (internalFile) {
     // since fd slicer autoClose is true, destroying the only write stream
     // is guaranteed by the API to close the fd
     internalFile.ws.destroy();
 
-    fs.unlink(internalFile.publicFile.path, function(err) {
+    fs.unlink(internalFile.publicFile.path, function (err) {
       if (err) self.handleError(err);
     });
   });
@@ -590,7 +678,7 @@ function cleanupOpenFiles(self) {
 function holdEmitQueue(self, eventEmitter) {
   var item = {cb: null, ee: eventEmitter, err: null};
   self.emitQueue.push(item);
-  return function(cb) {
+  return function (cb) {
     item.cb = cb;
     flushEmitQueue(self);
   };
@@ -628,10 +716,10 @@ function flushEmitQueue(self) {
 function handlePart(self, partStream) {
   beginFlush(self);
   var emitAndReleaseHold = holdEmitQueue(self, partStream);
-  partStream.on('end', function() {
+  partStream.on('end', function () {
     endFlush(self);
   });
-  emitAndReleaseHold(function() {
+  emitAndReleaseHold(function () {
     self.emit('part', partStream);
   });
 }
@@ -643,24 +731,25 @@ function handleFile(self, fileStream) {
     originalFilename: fileStream.filename,
     path: uploadPath(self.uploadDir, fileStream.filename),
     headers: fileStream.headers,
-    size: 0,
+    size: 0
   };
   var internalFile = {
     publicFile: publicFile,
-    ws: null,
+    ws: null
   };
   beginFlush(self); // flush to write stream
   var emitAndReleaseHold = holdEmitQueue(self, fileStream);
-  fileStream.on('error', function(err) {
+  fileStream.on('error', function (err) {
     self.handleError(err);
   });
-  fs.open(publicFile.path, 'wx', function(err, fd) {
+  fs.open(publicFile.path, 'wx', function (err, fd) {
     if (err) return self.handleError(err);
     var slicer = fdSlicer.createFromFd(fd, {autoClose: true});
 
     // end option here guarantees that no more than that amount will be written
     // or else an error will be emitted
-    internalFile.ws = slicer.createWriteStream({end: self.maxFilesSize - self.totalFileSize});
+    internalFile.ws = slicer.createWriteStream({
+      end: self.maxFilesSize - self.totalFileSize});
 
     // if an error ocurred while we were waiting for fs.open we handle that
     // cleanup now
@@ -668,22 +757,22 @@ function handleFile(self, fileStream) {
     if (self.error) return cleanupOpenFiles(self);
 
     var prevByteCount = 0;
-    internalFile.ws.on('error', function(err) {
+    internalFile.ws.on('error', function (err) {
       if (err.code === 'ETOOBIG') {
         err = createError(413, err.message);
         err.code = 'ETOOBIG';
       }
       self.handleError(err);
     });
-    internalFile.ws.on('progress', function() {
+    internalFile.ws.on('progress', function () {
       publicFile.size = internalFile.ws.bytesWritten;
       var delta = publicFile.size - prevByteCount;
       self.totalFileSize += delta;
       prevByteCount = publicFile.size;
     });
-    slicer.on('close', function() {
+    slicer.on('close', function () {
       if (self.error) return;
-      emitAndReleaseHold(function() {
+      emitAndReleaseHold(function () {
         self.emit('file', fileStream.name, publicFile);
       });
       endFlush(self);
@@ -698,23 +787,24 @@ function handleField(self, fieldStream) {
 
   beginFlush(self);
   var emitAndReleaseHold = holdEmitQueue(self, fieldStream);
-  fieldStream.on('error', function(err) {
+  fieldStream.on('error', function (err) {
     self.handleError(err);
   });
-  fieldStream.on('readable', function() {
+  fieldStream.on('readable', function () {
     var buffer = fieldStream.read();
     if (!buffer) return;
 
     self.totalFieldSize += buffer.length;
     if (self.totalFieldSize > self.maxFieldsSize) {
-      self.handleError(createError(413, 'maxFieldsSize ' + self.maxFieldsSize + ' exceeded'));
+      self.handleError(createError(413,
+        'maxFieldsSize ' + self.maxFieldsSize + ' exceeded'));
       return;
     }
     value += decoder.write(buffer);
   });
 
-  fieldStream.on('end', function() {
-    emitAndReleaseHold(function() {
+  fieldStream.on('end', function () {
+    emitAndReleaseHold(function () {
       self.emit('field', fieldStream.name, value);
     });
     endFlush(self);
@@ -729,9 +819,9 @@ function clearPartVars(self) {
   self.destStream = null;
 
   self.headerFieldDecoder = new StringDecoder(self.encoding);
-  self.headerField = "";
+  self.headerField = '';
   self.headerValueDecoder = new StringDecoder(self.encoding);
-  self.headerValue = "";
+  self.headerValue = '';
 }
 
 function setUpParser(self, boundary) {
@@ -749,7 +839,7 @@ function setUpParser(self, boundary) {
   self.partBoundaryFlag = false;
 
   beginFlush(self);
-  self.on('finish', function() {
+  self.on('finish', function () {
     if (self.state !== END) {
       self.handleError(createError(400, 'stream ended unexpectedly'));
     }
@@ -764,7 +854,7 @@ function uploadPath(baseDir, filename) {
 }
 
 function randoString(size) {
-  return rando(size).toString('base64').replace(/[\/\+]/g, function(x) {
+  return rando(size).toString('base64').replace(/[\/\+]/g, function (x) {
     return b64Safe[x];
   });
 }
@@ -783,15 +873,14 @@ function parseFilename(headerValue) {
     m = headerValue.match(/\bfilename\*=utf-8\'\'(.*?)($|; )/i);
     if (m) {
       m[1] = decodeURI(m[1]);
-    }
-    else {
+    } else {
       return;
     }
   }
 
   var filename = m[1];
   filename = filename.replace(/%22|\\"/g, '"');
-  filename = filename.replace(/&#([\d]{4});/g, function(m, code) {
+  filename = filename.replace(/&#([\d]{4});/g, function (m, code) {
     return String.fromCharCode(code);
   });
   return filename.substr(filename.lastIndexOf('\\') + 1);
