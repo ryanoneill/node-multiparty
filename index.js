@@ -230,10 +230,20 @@ Form.prototype._write = function (buffer, encoding, cb) {
     boundaryEnd: self.boundary.length - 1
   };
 
+  function clone(obj) {
+    if (null == obj || "object" != typeof obj) return obj;
+    var copy = obj.constructor();
+    for (var attr in obj) {
+        if (obj.hasOwnProperty(attr)) copy[attr] = obj[attr];
+    }
+    return copy;
+  }
+
   function handleStart(st) {
-    st.index = 0;
-    st.state = START_BOUNDARY;
-    return undefined;
+    var result = clone(st);
+    result.index = 0;
+    result.state = START_BOUNDARY;
+    return result;
   }
 
   function handleStartBoundary(st) {
@@ -437,8 +447,7 @@ Form.prototype._write = function (buffer, encoding, cb) {
     c = buffer[i];
     switch (st.state) {
       case START:
-        result = handleStart(st);
-        if (result) return result;
+        st = handleStart(st);
         /* falls through */
       case START_BOUNDARY:
         result = handleStartBoundary(st);
