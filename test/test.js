@@ -22,7 +22,6 @@ var standaloneTests = [
     name: "aok - standard",
     fn: function(cb) {
       var server = http.createServer(function(req, res) {
-        console.log('running aok');
         var form = new multiparty.Form();
 
         var partCount = 0;
@@ -73,7 +72,6 @@ var standaloneTests = [
     name: "missing header CRs",
     fn: function(cb) {
       var server = http.createServer(function(req, res) {
-        console.log('running missing');
         var form = new multiparty.Form();
 
         var partCount = 0;

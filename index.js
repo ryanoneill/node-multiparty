@@ -241,7 +241,6 @@ Form.prototype._write = function (buffer, encoding, cb) {
   }
 
   function handleStart(st) {
-    console.log('handleStart: ', c, String.fromCharCode(c));
     var result = clone(st);
 
     result.index = 0;
@@ -251,7 +250,6 @@ Form.prototype._write = function (buffer, encoding, cb) {
   }
 
   function handleStartBoundary(st) {
-    console.log('handleStartBoundary: ', c, String.fromCharCode(c));
     var result = clone(st);
 
     if (result.index === result.boundaryLength - 2 && c === HYPHEN) {
@@ -284,7 +282,6 @@ Form.prototype._write = function (buffer, encoding, cb) {
   }
 
   function handleHeaderFieldStart(st) {
-    console.log('handleHeaderFieldStart: ', c, String.fromCharCode(c));
     var result = clone(st);
 
     result.state = HEADER_FIELD;
@@ -295,7 +292,6 @@ Form.prototype._write = function (buffer, encoding, cb) {
   }
 
   function handleHeaderField(st) {
-    console.log('handleHeaderField: ', c, String.fromCharCode(c));
     var result = clone(st);
 
     if (c === CR) {
@@ -332,7 +328,6 @@ Form.prototype._write = function (buffer, encoding, cb) {
   }
 
   function handleHeaderValueStart(st) {
-    console.log('handleHeaderValueStart: ', c, String.fromCharCode(c));
     var result = clone(st);
 
     if (c !== SPACE) {
@@ -344,7 +339,6 @@ Form.prototype._write = function (buffer, encoding, cb) {
   }
 
   function handleHeaderValue(st) {
-    console.log('handleHeaderValue: ', c, String.fromCharCode(c));
     var result = clone(st);
 
     if (c === CR) {
@@ -363,7 +357,6 @@ Form.prototype._write = function (buffer, encoding, cb) {
   }
 
   function handleHeaderValueAlmostDone(st) {
-    console.log('handleHeaderValueAlmostDone: ', c, String.fromCharCode(c));
     var result = clone(st);
 
     if (c === LF) {
@@ -376,7 +369,6 @@ Form.prototype._write = function (buffer, encoding, cb) {
   }
 
   function handleHeadersAlmostDone(st) {
-    console.log('handleHeadersAlmostDone: ', c, String.fromCharCode(c));
     var result = clone(st);
 
     if (c === LF) {
@@ -394,7 +386,6 @@ Form.prototype._write = function (buffer, encoding, cb) {
   }
 
   function handlePartDataStart(st) {
-    console.log('handlePartDataStart: ', c, String.fromCharCode(c));
     var result = clone(st);
 
     result.state = PART_DATA;
@@ -444,7 +435,6 @@ Form.prototype._write = function (buffer, encoding, cb) {
 
 
   function handlePartData(st) {
-    console.log('handlePartData: ', c, String.fromCharCode(c));
     var result = clone(st);
     var skipLookbehind = false;
 
@@ -504,7 +494,6 @@ Form.prototype._write = function (buffer, encoding, cb) {
   }
 
   function handleCloseBoundary(st) {
-    console.log('handleCloseBoundary: ', c, String.fromCharCode(c));
     var result = clone(st);
 
     if (c === HYPHEN) {
