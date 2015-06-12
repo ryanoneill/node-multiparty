@@ -19,6 +19,108 @@ var TMP_PATH = path.join(__dirname, 'tmp');
 
 var standaloneTests = [
   {
+    name: "aok - standard",
+    fn: function(cb) {
+      var server = http.createServer(function(req, res) {
+        console.log('running aok');
+        var form = new multiparty.Form();
+
+        var partCount = 0;
+        form.on('part', function(part) {
+          part.resume();
+          partCount++;
+        });
+        form.on('close', function() {
+          assert.strictEqual(partCount, 2);
+          res.end();
+        });
+
+        form.parse(req);
+      });
+
+      server.listen(0, function() {
+        var body =
+          '--a9b57be2\r\n' +
+          'Content-Disposition: form-data; name="0"; filename="0.txt"\r\n' +
+          'Content-Type: application/octet-stream\r\n' +
+          '\r\nThis is the first file\r\n' +
+          '--a9b57be2\r\n' +
+          'Content-Disposition: form-data; name="1"; filename="1.txt"\r\n' +
+          'Content-Type: application/octet-stream\r\n' +
+          '\r\nThis is the second file\r\n' +
+          '--a9b57be2--\r\n';
+
+        var req = http.request({
+          method: 'POST',
+          port: server.address().port,
+          headers: {
+            'Content-Length': body.length,
+            'Content-Type': 'multipart/form-data; boundary=a9b57be2'
+          }
+        });
+        req.on('response', function (res) {
+          assert.equal(res.statusCode, 200);
+          res.on('data', function () {});
+          res.on('end', function () {
+            server.close(cb);
+          });
+        });
+        req.end(body);
+      });
+    },
+  },
+  {
+    name: "missing header CRs",
+    fn: function(cb) {
+      var server = http.createServer(function(req, res) {
+        console.log('running missing');
+        var form = new multiparty.Form();
+
+        var partCount = 0;
+        form.on('part', function(part) {
+          part.resume();
+          partCount++;
+        });
+        form.on('close', function() {
+          assert.strictEqual(partCount, 2);
+          res.end();
+        });
+
+        form.parse(req);
+      });
+
+      server.listen(0, function() {
+        var body =
+          '--a9b57be2\n' +
+          'Content-Disposition: form-data; name="0"; filename="0.txt"\n' +
+          'Content-Type: application/octet-stream\n' +
+          '\nThis is the first file\r\n' +
+          '--a9b57be2\n' +
+          'Content-Disposition: form-data; name="1"; filename="1.txt"\n' +
+          'Content-Type: application/octet-stream\n' +
+          '\nThis is the second file\r\n' +
+          '--a9b57be2--\n';
+
+        var req = http.request({
+          method: 'POST',
+          port: server.address().port,
+          headers: {
+            'Content-Length': body.length,
+            'Content-Type': 'multipart/form-data; boundary=a9b57be2'
+          }
+        });
+        req.on('response', function (res) {
+          assert.equal(res.statusCode, 200);
+          res.on('data', function () {});
+          res.on('end', function () {
+            server.close(cb);
+          });
+        });
+        req.end(body);
+      });
+    },
+  },
+  {
     name: 'chunked',
     fn: function(cb) {
       var server = http.createServer(function(req, resp) {

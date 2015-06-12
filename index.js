@@ -241,13 +241,17 @@ Form.prototype._write = function (buffer, encoding, cb) {
   }
 
   function handleStart(st) {
+    console.log('handleStart: ', c, String.fromCharCode(c));
     var result = clone(st);
+
     result.index = 0;
     result.state = START_BOUNDARY;
+
     return result;
   }
 
   function handleStartBoundary(st) {
+    console.log('handleStartBoundary: ', c, String.fromCharCode(c));
     var result = clone(st);
 
     if (result.index === result.boundaryLength - 2 && c === HYPHEN) {
@@ -256,6 +260,10 @@ Form.prototype._write = function (buffer, encoding, cb) {
     } else if (result.index === result.boundaryLength - 2) {
       if (c === CR) {
         result.index++;
+      } else if (c === LF) {
+        result.index = 0;
+        self.onParsePartBegin();
+        result.state = HEADER_FIELD_START;
       } else {
         result.errorState = createError(400, 'Expected CR Received ' + c);
       }
@@ -276,19 +284,32 @@ Form.prototype._write = function (buffer, encoding, cb) {
   }
 
   function handleHeaderFieldStart(st) {
+    console.log('handleHeaderFieldStart: ', c, String.fromCharCode(c));
     var result = clone(st);
+
     result.state = HEADER_FIELD;
     self.headerFieldMark = i;
     result.index = 0;
+
     return result;
   }
 
   function handleHeaderField(st) {
+    console.log('handleHeaderField: ', c, String.fromCharCode(c));
     var result = clone(st);
 
     if (c === CR) {
       self.headerFieldMark = null;
       result.state = HEADERS_ALMOST_DONE;
+    } else if (c === LF) {
+      self.headerFieldMark = null;
+      result.state = HEADERS_ALMOST_DONE;
+      var err = self.onParseHeadersEnd(i + 1);
+      if (err) {
+        result.errorState = err;
+      } else {
+        result.state = PART_DATA_START;
+      }
     } else if (c === COLON) {
       result.index++;
       if (result.index === 1) {
@@ -311,6 +332,7 @@ Form.prototype._write = function (buffer, encoding, cb) {
   }
 
   function handleHeaderValueStart(st) {
+    console.log('handleHeaderValueStart: ', c, String.fromCharCode(c));
     var result = clone(st);
 
     if (c !== SPACE) {
@@ -322,6 +344,7 @@ Form.prototype._write = function (buffer, encoding, cb) {
   }
 
   function handleHeaderValue(st) {
+    console.log('handleHeaderValue: ', c, String.fromCharCode(c));
     var result = clone(st);
 
     if (c === CR) {
@@ -329,12 +352,18 @@ Form.prototype._write = function (buffer, encoding, cb) {
       self.headerValueMark = null;
       self.onParseHeaderEnd();
       result.state = HEADER_VALUE_ALMOST_DONE;
+    } else if (c === LF) {
+      self.onParseHeaderValue(buffer.slice(self.headerValueMark, i));
+      self.headerValueMark = null;
+      self.onParseHeaderEnd();
+      result.state = HEADER_FIELD_START;
     }
 
     return result;
   }
 
   function handleHeaderValueAlmostDone(st) {
+    console.log('handleHeaderValueAlmostDone: ', c, String.fromCharCode(c));
     var result = clone(st);
 
     if (c === LF) {
@@ -347,6 +376,7 @@ Form.prototype._write = function (buffer, encoding, cb) {
   }
 
   function handleHeadersAlmostDone(st) {
+    console.log('handleHeadersAlmostDone: ', c, String.fromCharCode(c));
     var result = clone(st);
 
     if (c === LF) {
@@ -364,6 +394,7 @@ Form.prototype._write = function (buffer, encoding, cb) {
   }
 
   function handlePartDataStart(st) {
+    console.log('handlePartDataStart: ', c, String.fromCharCode(c));
     var result = clone(st);
 
     result.state = PART_DATA;
@@ -413,6 +444,7 @@ Form.prototype._write = function (buffer, encoding, cb) {
 
 
   function handlePartData(st) {
+    console.log('handlePartData: ', c, String.fromCharCode(c));
     var result = clone(st);
     var skipLookbehind = false;
 
@@ -434,6 +466,15 @@ Form.prototype._write = function (buffer, encoding, cb) {
       if (c === CR) {
         // CR = part boundary
         self.partBoundaryFlag = true;
+      } else if (c === LF) {
+        result.index = 0;
+        if (c === LF) {
+          self.partBoundaryFlag = false;
+          self.onParsePartEnd();
+          self.onParsePartBegin();
+          result.state = HEADER_FIELD_START;
+          skipLookbehind = true;
+        }
       } else if (c === HYPHEN) {
         result.index = 1;
         result.state = CLOSE_BOUNDARY;
@@ -463,6 +504,7 @@ Form.prototype._write = function (buffer, encoding, cb) {
   }
 
   function handleCloseBoundary(st) {
+    console.log('handleCloseBoundary: ', c, String.fromCharCode(c));
     var result = clone(st);
 
     if (c === HYPHEN) {
