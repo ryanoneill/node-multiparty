@@ -220,6 +220,7 @@ Form.prototype._write = function (buffer, encoding, cb) {
   var bufferLength = buffer.length;
 
   var st = {
+    errorState: undefined,
     prevIndex: self.index,
     index: self.index,
     state: self.state,
@@ -247,69 +248,73 @@ Form.prototype._write = function (buffer, encoding, cb) {
   }
 
   function handleStartBoundary(st) {
-    if (st.index === st.boundaryLength - 2 && c === HYPHEN) {
-      st.index = 1;
-      st.state = CLOSE_BOUNDARY;
-      return undefined;
-    } else if (st.index === st.boundaryLength - 2) {
-      if (c !== CR) {
-        return self.handleError(createError(400, 'Expected CR Received ' + c));
+    var result = clone(st);
+
+    if (result.index === result.boundaryLength - 2 && c === HYPHEN) {
+      result.index = 1;
+      result.state = CLOSE_BOUNDARY;
+    } else if (result.index === result.boundaryLength - 2) {
+      if (c === CR) {
+        result.index++;
+      } else {
+        result.errorState = createError(400, 'Expected CR Received ' + c);
       }
-      st.index++;
-      return undefined;
-    } else if (st.index === st.boundaryLength - 1) {
-      if (c !== LF) {
-        return self.handleError(createError(400, 'Expected LF Received ' + c));
+    } else if (result.index === result.boundaryLength - 1) {
+      if (c === LF) {
+        result.index = 0;
+        self.onParsePartBegin();
+        result.state = HEADER_FIELD_START;
+      } else {
+        result.errorState = createError(400, 'Expected LF Received ' + c);
       }
-      st.index = 0;
-      self.onParsePartBegin();
-      st.state = HEADER_FIELD_START;
-      return undefined;
+    } else {
+      if (c !== result.boundary[result.index + 2]) result.index = -2;
+      if (c === result.boundary[result.index + 2]) result.index++;
     }
 
-    if (c !== st.boundary[st.index + 2]) st.index = -2;
-    if (c === st.boundary[st.index + 2]) st.index++;
-    return undefined;
+    return result;
   }
 
   function handleHeaderFieldStart(st) {
-    st.state = HEADER_FIELD;
+    var result = clone(st);
+    result.state = HEADER_FIELD;
     self.headerFieldMark = i;
-    st.index = 0;
-    return undefined;
+    result.index = 0;
+    return result;
   }
 
   function handleHeaderField(st) {
+    var result = clone(st);
+
     if (c === CR) {
       self.headerFieldMark = null;
-      st.state = HEADERS_ALMOST_DONE;
-      return undefined;
+      result.state = HEADERS_ALMOST_DONE;
+      return result;
     }
 
-    st.index++;
+    result.index++;
     if (c === HYPHEN) {
-      return undefined;
+      return result;
     }
 
     if (c === COLON) {
-      if (st.index === 1) {
+      if (result.index === 1) {
         // empty header field
-        self.handleError(createError(400, 'Empty header field'));
-        return;
+        result.errorState = createError(400, 'Empty header field');
+        return result;
       }
       self.onParseHeaderField(buffer.slice(self.headerFieldMark, i));
       self.headerFieldMark = null;
-      st.state = HEADER_VALUE_START;
-      return undefined;
+      result.state = HEADER_VALUE_START;
+      return result;
     }
 
     var cl = lower(c);
     if (cl < A || cl > Z) {
-      self.handleError(createError(400,
-        'Expected alphabetic character, received ' + c));
-      return;
+      result.errorState = createError(400, 'Expected alphabetic character, received ' + c);
+      return result;
     }
-    return undefined;
+    return result;
   }
 
   function handleHeaderValueStart(st) {
@@ -450,16 +455,19 @@ Form.prototype._write = function (buffer, encoding, cb) {
         st = handleStart(st);
         /* falls through */
       case START_BOUNDARY:
-        result = handleStartBoundary(st);
-        if (result) return result;
+        st = handleStartBoundary(st);
+        if (st.errorState) {
+          return self.handleError(st.errorState);
+        }
         break;
       case HEADER_FIELD_START:
-        result = handleHeaderFieldStart(st);
-        if (result) return result;
+        st = handleHeaderFieldStart(st);
         /* falls through */
       case HEADER_FIELD:
-        result = handleHeaderField(st);
-        if (result) return result;
+        st = handleHeaderField(st);
+        if (st.errorState) {
+          return self.handleError(st.errorState);
+        }
         break;
       case HEADER_VALUE_START:
         result = handleHeaderValueStart(st);
