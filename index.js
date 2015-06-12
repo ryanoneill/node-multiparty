@@ -372,65 +372,34 @@ Form.prototype._write = function (buffer, encoding, cb) {
     return result;
   }
 
-  function handlePartData(st) {
-    st.prevIndex = st.index;
+  function safelySkipNonBoundary(st) {
+    var result = clone(st);
 
-    if (st.index === 0) {
+    if (result.index === 0) {
       // boyer-moore derrived algorithm to safely skip non-boundary data
-      i += st.boundaryEnd;
-      while (i < bufferLength && !(buffer[i] in st.boundaryChars)) {
-        i += st.boundaryLength;
+      i += result.boundaryEnd;
+      while (i < bufferLength && !(buffer[i] in result.boundaryChars)) {
+        i += result.boundaryLength;
       }
-      i -= st.boundaryEnd;
+      i -= result.boundaryEnd;
       c = buffer[i];
     }
 
-    if (st.index < st.boundaryLength) {
-      if (st.boundary[st.index] === c) {
-        if (st.index === 0) {
-          self.onParsePartData(buffer.slice(self.partDataMark, i));
-          self.partDataMark = null;
-        }
-        st.index++;
-      } else {
-        st.index = 0;
-      }
-    } else if (st.index === st.boundaryLength) {
-      st.index++;
-      if (c === CR) {
-        // CR = part boundary
-        self.partBoundaryFlag = true;
-      } else if (c === HYPHEN) {
-        st.index = 1;
-        st.state = CLOSE_BOUNDARY;
-        return undefined;
-      } else {
-        st.index = 0;
-      }
-    } else if (st.index - 1 === st.boundaryLength) {
-      if (self.partBoundaryFlag) {
-        st.index = 0;
-        if (c === LF) {
-          self.partBoundaryFlag = false;
-          self.onParsePartEnd();
-          self.onParsePartBegin();
-          st.state = HEADER_FIELD_START;
-          return undefined;
-        }
-      } else {
-        st.index = 0;
-      }
-    }
+    return result;
+  }
 
-    if (st.index > 0) {
+  function resolveLookbehind(st) {
+    var result = clone(st);
+
+    if (result.index > 0) {
       // when matching a possible boundary, keep a lookbehind reference
       // in case it turns out to be a false lead
-      st.lookbehind[st.index - 1] = c;
-    } else if (st.prevIndex > 0) {
+      result.lookbehind[result.index - 1] = c;
+    } else if (result.prevIndex > 0) {
       // if our boundary turned out to be rubbish, the captured lookbehind
       // belongs to partData
-      self.onParsePartData(st.lookbehind.slice(0, st.prevIndex));
-      st.prevIndex = 0;
+      self.onParsePartData(result.lookbehind.slice(0, result.prevIndex));
+      result.prevIndex = 0;
       self.partDataMark = i;
 
       // reconsider the current character
@@ -438,22 +407,79 @@ Form.prototype._write = function (buffer, encoding, cb) {
       // it could be the beginning of a new sequence
       i--;
     }
-    return undefined;
+
+    return result;
+  }
+
+
+  function handlePartData(st) {
+    var result = clone(st);
+    var skipLookbehind = false;
+
+    result.prevIndex = result.index;
+    result = safelySkipNonBoundary(result);
+
+    if (result.index < result.boundaryLength) {
+      if (result.boundary[result.index] === c) {
+        if (result.index === 0) {
+          self.onParsePartData(buffer.slice(self.partDataMark, i));
+          self.partDataMark = null;
+        }
+        result.index++;
+      } else {
+        result.index = 0;
+      }
+    } else if (result.index === result.boundaryLength) {
+      result.index++;
+      if (c === CR) {
+        // CR = part boundary
+        self.partBoundaryFlag = true;
+      } else if (c === HYPHEN) {
+        result.index = 1;
+        result.state = CLOSE_BOUNDARY;
+        skipLookbehind = true;
+      } else {
+        result.index = 0;
+      }
+    } else if (result.index - 1 === result.boundaryLength) {
+      if (self.partBoundaryFlag) {
+        result.index = 0;
+        if (c === LF) {
+          self.partBoundaryFlag = false;
+          self.onParsePartEnd();
+          self.onParsePartBegin();
+          result.state = HEADER_FIELD_START;
+          skipLookbehind = true;
+        }
+      } else {
+        result.index = 0;
+      }
+    }
+
+    if (!skipLookbehind) {
+      result = resolveLookbehind(result);
+    }
+    return result;
   }
 
   function handleCloseBoundary(st) {
-    if (c !== HYPHEN) {
-      return self.handleError(createError(400,
-        'Expected HYPHEN Received ' + c));
+    var result = clone(st);
+
+    if (c === HYPHEN) {
+      if (result.index > 1) {
+        result.errorState = new Error('Parser has invalid state.');
+      } else {
+        if (result.index === 1) {
+          self.onParsePartEnd();
+          result.state = END;
+        }
+        result.index++;
+      }
+    } else {
+      result.errorState = createError(400, 'Expected HYPHEN Received ' + c);
     }
-    if (st.index === 1) {
-      self.onParsePartEnd();
-      st.state = END;
-    } else if (st.index > 1) {
-      return self.handleError(new Error('Parser has invalid state.'));
-    }
-    st.index++;
-    return undefined;
+
+    return result;
   }
 
   var result;
@@ -500,12 +526,13 @@ Form.prototype._write = function (buffer, encoding, cb) {
         st = handlePartDataStart(st);
         /* falls through */
       case PART_DATA:
-        result = handlePartData(st);
-        if (result) return result;
+        st = handlePartData(st);
         break;
       case CLOSE_BOUNDARY:
-        result = handleCloseBoundary(st);
-        if (result) return result;
+        st = handleCloseBoundary(st);
+        if (st.errorState) {
+          return self.handleError(st.errorState);
+        }
         break;
       case END:
         break;
