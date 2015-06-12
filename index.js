@@ -289,31 +289,25 @@ Form.prototype._write = function (buffer, encoding, cb) {
     if (c === CR) {
       self.headerFieldMark = null;
       result.state = HEADERS_ALMOST_DONE;
-      return result;
-    }
-
-    result.index++;
-    if (c === HYPHEN) {
-      return result;
-    }
-
-    if (c === COLON) {
-      if (result.index === 1) {
-        // empty header field
-        result.errorState = createError(400, 'Empty header field');
-        return result;
+    } else {
+      result.index++;
+      if (c === COLON) {
+        if (result.index === 1) {
+          // empty header field
+          result.errorState = createError(400, 'Empty header field');
+        } else {
+          self.onParseHeaderField(buffer.slice(self.headerFieldMark, i));
+          self.headerFieldMark = null;
+          result.state = HEADER_VALUE_START;
+        }
+      } else if (c !== HYPHEN) {
+        var cl = lower(c);
+        if (cl < A || cl > Z) {
+          result.errorState = createError(400, 'Expected alphabetic character, received ' + c);
+        }
       }
-      self.onParseHeaderField(buffer.slice(self.headerFieldMark, i));
-      self.headerFieldMark = null;
-      result.state = HEADER_VALUE_START;
-      return result;
     }
 
-    var cl = lower(c);
-    if (cl < A || cl > Z) {
-      result.errorState = createError(400, 'Expected alphabetic character, received ' + c);
-      return result;
-    }
     return result;
   }
 
