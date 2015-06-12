@@ -230,13 +230,13 @@ Form.prototype._write = function (buffer, encoding, cb) {
     boundaryEnd: self.boundary.length - 1
   };
 
-  function handleStart() {
+  function handleStart(st) {
     st.index = 0;
     st.state = START_BOUNDARY;
     return undefined;
   }
 
-  function handleStartBoundary() {
+  function handleStartBoundary(st) {
     if (st.index === st.boundaryLength - 2 && c === HYPHEN) {
       st.index = 1;
       st.state = CLOSE_BOUNDARY;
@@ -262,14 +262,14 @@ Form.prototype._write = function (buffer, encoding, cb) {
     return undefined;
   }
 
-  function handleHeaderFieldStart() {
+  function handleHeaderFieldStart(st) {
     st.state = HEADER_FIELD;
     self.headerFieldMark = i;
     st.index = 0;
     return undefined;
   }
 
-  function handleHeaderField() {
+  function handleHeaderField(st) {
     if (c === CR) {
       self.headerFieldMark = null;
       st.state = HEADERS_ALMOST_DONE;
@@ -302,7 +302,7 @@ Form.prototype._write = function (buffer, encoding, cb) {
     return undefined;
   }
 
-  function handleHeaderValueStart() {
+  function handleHeaderValueStart(st) {
     if (c === SPACE) {
       return undefined;
     }
@@ -312,7 +312,7 @@ Form.prototype._write = function (buffer, encoding, cb) {
     return undefined;
   }
 
-  function handleHeaderValue() {
+  function handleHeaderValue(st) {
     if (c === CR) {
       self.onParseHeaderValue(buffer.slice(self.headerValueMark, i));
       self.headerValueMark = null;
@@ -322,7 +322,7 @@ Form.prototype._write = function (buffer, encoding, cb) {
     return undefined;
   }
 
-  function handleHeaderValueAlmostDone() {
+  function handleHeaderValueAlmostDone(st) {
     if (c !== LF) {
       return self.handleError(createError(400,
         'Expected LF Received ' + c));
@@ -331,7 +331,7 @@ Form.prototype._write = function (buffer, encoding, cb) {
     return undefined;
   }
 
-  function handleHeadersAlmostDone() {
+  function handleHeadersAlmostDone(st) {
     if (c !== LF) {
       return self.handleError(createError(400,
         'Expected LF Received ' + c));
@@ -342,13 +342,13 @@ Form.prototype._write = function (buffer, encoding, cb) {
     return undefined;
   }
 
-  function handlePartDataStart() {
+  function handlePartDataStart(st) {
     st.state = PART_DATA;
     self.partDataMark = i;
     return undefined;
   }
 
-  function handlePartData() {
+  function handlePartData(st) {
     st.prevIndex = st.index;
 
     if (st.index === 0) {
@@ -417,7 +417,7 @@ Form.prototype._write = function (buffer, encoding, cb) {
     return undefined;
   }
 
-  function handleCloseBoundary() {
+  function handleCloseBoundary(st) {
     if (c !== HYPHEN) {
       return self.handleError(createError(400,
         'Expected HYPHEN Received ' + c));
@@ -437,47 +437,47 @@ Form.prototype._write = function (buffer, encoding, cb) {
     c = buffer[i];
     switch (st.state) {
       case START:
-        result = handleStart();
+        result = handleStart(st);
         if (result) return result;
         /* falls through */
       case START_BOUNDARY:
-        result = handleStartBoundary();
+        result = handleStartBoundary(st);
         if (result) return result;
         break;
       case HEADER_FIELD_START:
-        result = handleHeaderFieldStart();
+        result = handleHeaderFieldStart(st);
         if (result) return result;
         /* falls through */
       case HEADER_FIELD:
-        result = handleHeaderField();
+        result = handleHeaderField(st);
         if (result) return result;
         break;
       case HEADER_VALUE_START:
-        result = handleHeaderValueStart();
+        result = handleHeaderValueStart(st);
         if (result) return result;
         /* falls through */
       case HEADER_VALUE:
-        result = handleHeaderValue();
+        result = handleHeaderValue(st);
         if (result) return result;
         break;
       case HEADER_VALUE_ALMOST_DONE:
-        result = handleHeaderValueAlmostDone();
+        result = handleHeaderValueAlmostDone(st);
         if (result) return result;
         break;
       case HEADERS_ALMOST_DONE:
-        result = handleHeadersAlmostDone();
+        result = handleHeadersAlmostDone(st);
         if (result) return result;
         break;
       case PART_DATA_START:
-        result = handlePartDataStart();
+        result = handlePartDataStart(st);
         if (result) return result;
         /* falls through */
       case PART_DATA:
-        result = handlePartData();
+        result = handlePartData(st);
         if (result) return result;
         break;
       case CLOSE_BOUNDARY:
-        result = handleCloseBoundary();
+        result = handleCloseBoundary(st);
         if (result) return result;
         break;
       case END:
