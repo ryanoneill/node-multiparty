@@ -289,22 +289,21 @@ Form.prototype._write = function (buffer, encoding, cb) {
     if (c === CR) {
       self.headerFieldMark = null;
       result.state = HEADERS_ALMOST_DONE;
-    } else {
+    } else if (c === COLON) {
       result.index++;
-      if (c === COLON) {
-        if (result.index === 1) {
-          // empty header field
-          result.errorState = createError(400, 'Empty header field');
-        } else {
-          self.onParseHeaderField(buffer.slice(self.headerFieldMark, i));
-          self.headerFieldMark = null;
-          result.state = HEADER_VALUE_START;
-        }
-      } else if (c !== HYPHEN) {
-        var cl = lower(c);
-        if (cl < A || cl > Z) {
-          result.errorState = createError(400, 'Expected alphabetic character, received ' + c);
-        }
+      if (result.index === 1) {
+        // empty header field
+        result.errorState = createError(400, 'Empty header field');
+      } else {
+        self.onParseHeaderField(buffer.slice(self.headerFieldMark, i));
+        self.headerFieldMark = null;
+        result.state = HEADER_VALUE_START;
+      }
+    } else if (c !== HYPHEN) {
+      result.index++;
+      var cl = lower(c);
+      if (cl < A || cl > Z) {
+        result.errorState = createError(400, 'Expected alphabetic character, received ' + c);
       }
     }
 
@@ -312,49 +311,65 @@ Form.prototype._write = function (buffer, encoding, cb) {
   }
 
   function handleHeaderValueStart(st) {
-    if (c === SPACE) {
-      return undefined;
+    var result = clone(st);
+
+    if (c !== SPACE) {
+      self.headerValueMark = i;
+      result.state = HEADER_VALUE;
     }
 
-    self.headerValueMark = i;
-    st.state = HEADER_VALUE;
-    return undefined;
+    return result;
   }
 
   function handleHeaderValue(st) {
+    var result = clone(st);
+
     if (c === CR) {
       self.onParseHeaderValue(buffer.slice(self.headerValueMark, i));
       self.headerValueMark = null;
       self.onParseHeaderEnd();
-      st.state = HEADER_VALUE_ALMOST_DONE;
+      result.state = HEADER_VALUE_ALMOST_DONE;
     }
-    return undefined;
+
+    return result;
   }
 
   function handleHeaderValueAlmostDone(st) {
-    if (c !== LF) {
-      return self.handleError(createError(400,
-        'Expected LF Received ' + c));
+    var result = clone(st);
+
+    if (c === LF) {
+      result.state = HEADER_FIELD_START;
+    } else {
+      result.errorState = createError(400, 'Expected LF Received ' + c);
     }
-    st.state = HEADER_FIELD_START;
-    return undefined;
+
+    return result;
   }
 
   function handleHeadersAlmostDone(st) {
-    if (c !== LF) {
-      return self.handleError(createError(400,
-        'Expected LF Received ' + c));
+    var result = clone(st);
+
+    if (c === LF) {
+      var err = self.onParseHeadersEnd(i + 1);
+      if (err) {
+        result.errorState = err;
+      } else {
+        result.state = PART_DATA_START;
+      }
+    } else {
+      result.errorState = createError(400, 'Expected LF Received ' + c);
     }
-    var err = self.onParseHeadersEnd(i + 1);
-    if (err) return self.handleError(err);
-    st.state = PART_DATA_START;
-    return undefined;
+
+    return result;
   }
 
   function handlePartDataStart(st) {
-    st.state = PART_DATA;
+    var result = clone(st);
+
+    result.state = PART_DATA;
     self.partDataMark = i;
-    return undefined;
+
+    return result;
   }
 
   function handlePartData(st) {
@@ -464,24 +479,25 @@ Form.prototype._write = function (buffer, encoding, cb) {
         }
         break;
       case HEADER_VALUE_START:
-        result = handleHeaderValueStart(st);
-        if (result) return result;
+        st = handleHeaderValueStart(st);
         /* falls through */
       case HEADER_VALUE:
-        result = handleHeaderValue(st);
-        if (result) return result;
+        st = handleHeaderValue(st);
         break;
       case HEADER_VALUE_ALMOST_DONE:
-        result = handleHeaderValueAlmostDone(st);
-        if (result) return result;
+        st = handleHeaderValueAlmostDone(st);
+        if (st.errorState) {
+          return self.handleError(st.errorState);
+        }
         break;
       case HEADERS_ALMOST_DONE:
-        result = handleHeadersAlmostDone(st);
-        if (result) return result;
+        st = handleHeadersAlmostDone(st);
+        if (st.errorState) {
+          return self.handleError(st.errorState);
+        }
         break;
       case PART_DATA_START:
-        result = handlePartDataStart(st);
-        if (result) return result;
+        st = handlePartDataStart(st);
         /* falls through */
       case PART_DATA:
         result = handlePartData(st);
