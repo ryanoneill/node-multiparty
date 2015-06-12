@@ -216,83 +216,85 @@ Form.prototype._write = function (buffer, encoding, cb) {
 
   var self = this;
   var i = 0;
-  var len = buffer.length;
-  var prevIndex = self.index;
-  var index = self.index;
-  var state = self.state;
+  var c;
+
+  var st = {
+    prevIndex: self.index,
+    index: self.index,
+    state: self.state
+  };
+
   var lookbehind = self.lookbehind;
   var boundary = self.boundary;
   var boundaryChars = self.boundaryChars;
   var boundaryLength = self.boundary.length;
   var boundaryEnd = boundaryLength - 1;
   var bufferLength = buffer.length;
-  var c;
-  var cl;
 
   function handleStart() {
-    index = 0;
-    state = START_BOUNDARY;
+    st.index = 0;
+    st.state = START_BOUNDARY;
     return undefined;
   }
 
   function handleStartBoundary() {
-    if (index === boundaryLength - 2 && c === HYPHEN) {
-      index = 1;
-      state = CLOSE_BOUNDARY;
+    if (st.index === boundaryLength - 2 && c === HYPHEN) {
+      st.index = 1;
+      st.state = CLOSE_BOUNDARY;
       return undefined;
-    } else if (index === boundaryLength - 2) {
+    } else if (st.index === boundaryLength - 2) {
       if (c !== CR) {
         return self.handleError(createError(400, 'Expected CR Received ' + c));
       }
-      index++;
+      st.index++;
       return undefined;
-    } else if (index === boundaryLength - 1) {
+    } else if (st.index === boundaryLength - 1) {
       if (c !== LF) {
         return self.handleError(createError(400, 'Expected LF Received ' + c));
       }
-      index = 0;
+      st.index = 0;
       self.onParsePartBegin();
-      state = HEADER_FIELD_START;
+      st.state = HEADER_FIELD_START;
       return undefined;
     }
 
-    if (c !== boundary[index + 2]) index = -2;
-    if (c === boundary[index + 2]) index++;
+    if (c !== boundary[st.index + 2]) st.index = -2;
+    if (c === boundary[st.index + 2]) st.index++;
     return undefined;
   }
 
   function handleHeaderFieldStart() {
-    state = HEADER_FIELD;
+    st.state = HEADER_FIELD;
     self.headerFieldMark = i;
-    index = 0;
+    st.index = 0;
     return undefined;
   }
 
   function handleHeaderField() {
     if (c === CR) {
       self.headerFieldMark = null;
-      state = HEADERS_ALMOST_DONE;
+      st.state = HEADERS_ALMOST_DONE;
       return undefined;
     }
 
-    index++;
+    st.index++;
     if (c === HYPHEN) {
       return undefined;
     }
 
     if (c === COLON) {
-      if (index === 1) {
+      if (st.index === 1) {
         // empty header field
         self.handleError(createError(400, 'Empty header field'));
         return;
       }
       self.onParseHeaderField(buffer.slice(self.headerFieldMark, i));
       self.headerFieldMark = null;
-      state = HEADER_VALUE_START;
+      st.state = HEADER_VALUE_START;
       return undefined;
     }
 
-    cl = lower(c);
+    var cl = lower(c);
     if (cl < A || cl > Z) {
       self.handleError(createError(400,
         'Expected alphabetic character, received ' + c));
@@ -307,7 +309,7 @@ Form.prototype._write = function (buffer, encoding, cb) {
     }
 
     self.headerValueMark = i;
-    state = HEADER_VALUE;
+    st.state = HEADER_VALUE;
     return undefined;
   }
 
@@ -316,7 +318,7 @@ Form.prototype._write = function (buffer, encoding, cb) {
       self.onParseHeaderValue(buffer.slice(self.headerValueMark, i));
       self.headerValueMark = null;
       self.onParseHeaderEnd();
-      state = HEADER_VALUE_ALMOST_DONE;
+      st.state = HEADER_VALUE_ALMOST_DONE;
     }
     return undefined;
   }
@@ -326,7 +328,7 @@ Form.prototype._write = function (buffer, encoding, cb) {
       return self.handleError(createError(400,
         'Expected LF Received ' + c));
     }
-    state = HEADER_FIELD_START;
+    st.state = HEADER_FIELD_START;
     return undefined;
   }
 
@@ -337,20 +339,20 @@ Form.prototype._write = function (buffer, encoding, cb) {
     }
     var err = self.onParseHeadersEnd(i + 1);
     if (err) return self.handleError(err);
-    state = PART_DATA_START;
+    st.state = PART_DATA_START;
     return undefined;
   }
 
   function handlePartDataStart() {
-    state = PART_DATA;
+    st.state = PART_DATA;
     self.partDataMark = i;
     return undefined;
   }
 
   function handlePartData() {
-    prevIndex = index;
+    st.prevIndex = st.index;
 
-    if (index === 0) {
+    if (st.index === 0) {
       // boyer-moore derrived algorithm to safely skip non-boundary data
       i += boundaryEnd;
       while (i < bufferLength && !(buffer[i] in boundaryChars)) {
@@ -360,52 +362,52 @@ Form.prototype._write = function (buffer, encoding, cb) {
       c = buffer[i];
     }
 
-    if (index < boundaryLength) {
-      if (boundary[index] === c) {
-        if (index === 0) {
+    if (st.index < boundaryLength) {
+      if (boundary[st.index] === c) {
+        if (st.index === 0) {
           self.onParsePartData(buffer.slice(self.partDataMark, i));
           self.partDataMark = null;
         }
-        index++;
+        st.index++;
       } else {
-        index = 0;
+        st.index = 0;
       }
-    } else if (index === boundaryLength) {
-      index++;
+    } else if (st.index === boundaryLength) {
+      st.index++;
       if (c === CR) {
         // CR = part boundary
         self.partBoundaryFlag = true;
       } else if (c === HYPHEN) {
-        index = 1;
-        state = CLOSE_BOUNDARY;
+        st.index = 1;
+        st.state = CLOSE_BOUNDARY;
         return undefined;
       } else {
-        index = 0;
+        st.index = 0;
       }
-    } else if (index - 1 === boundaryLength) {
+    } else if (st.index - 1 === boundaryLength) {
       if (self.partBoundaryFlag) {
-        index = 0;
+        st.index = 0;
         if (c === LF) {
           self.partBoundaryFlag = false;
           self.onParsePartEnd();
           self.onParsePartBegin();
-          state = HEADER_FIELD_START;
+          st.state = HEADER_FIELD_START;
           return undefined;
         }
       } else {
-        index = 0;
+        st.index = 0;
       }
     }
 
-    if (index > 0) {
+    if (st.index > 0) {
       // when matching a possible boundary, keep a lookbehind reference
       // in case it turns out to be a false lead
-      lookbehind[index - 1] = c;
-    } else if (prevIndex > 0) {
+      lookbehind[st.index - 1] = c;
+    } else if (st.prevIndex > 0) {
       // if our boundary turned out to be rubbish, the captured lookbehind
       // belongs to partData
-      self.onParsePartData(lookbehind.slice(0, prevIndex));
-      prevIndex = 0;
+      self.onParsePartData(lookbehind.slice(0, st.prevIndex));
+      st.prevIndex = 0;
       self.partDataMark = i;
 
       // reconsider the current character
@@ -421,20 +423,20 @@ Form.prototype._write = function (buffer, encoding, cb) {
       return self.handleError(createError(400,
         'Expected HYPHEN Received ' + c));
     }
-    if (index === 1) {
+    if (st.index === 1) {
       self.onParsePartEnd();
-      state = END;
-    } else if (index > 1) {
+      st.state = END;
+    } else if (st.index > 1) {
       return self.handleError(new Error('Parser has invalid state.'));
     }
-    index++;
+    st.index++;
     return undefined;
   }
 
   var result;
-  for (i = 0; i < len; i++) {
+  for (i = 0; i < bufferLength; i++) {
     c = buffer[i];
-    switch (state) {
+    switch (st.state) {
       case START:
         result = handleStart();
         if (result) return result;
@@ -500,8 +502,8 @@ Form.prototype._write = function (buffer, encoding, cb) {
     self.partDataMark = 0;
   }
 
-  self.index = index;
-  self.state = state;
+  self.index = st.index;
+  self.state = st.state;
 
   self.bytesReceived += buffer.length;
   self.emit('progress', self.bytesReceived, self.bytesExpected);
